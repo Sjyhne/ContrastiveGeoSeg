@@ -1,0 +1,9 @@
+wandb/
+data/
+lightning_logs/
+*.pth
+pretrain_weights/
+model_weights/
+mmsegmentation/
+*.zip
+__pycache__

@@ -99,11 +99,11 @@ def rgb_to_2D_label(_label):
     label_seg = np.zeros(_label.shape[1:], dtype=np.uint8)
     label_seg[np.all(_label.transpose([1, 2, 0]) == ImSurf, axis=-1)] = 0
     label_seg[np.all(_label.transpose([1, 2, 0]) == Building, axis=-1)] = 1
-    label_seg[np.all(_label.transpose([1, 2, 0]) == LowVeg, axis=-1)] = 2
-    label_seg[np.all(_label.transpose([1, 2, 0]) == Tree, axis=-1)] = 3
-    label_seg[np.all(_label.transpose([1, 2, 0]) == Car, axis=-1)] = 4
-    label_seg[np.all(_label.transpose([1, 2, 0]) == Clutter, axis=-1)] = 5
-    label_seg[np.all(_label.transpose([1, 2, 0]) == Boundary, axis=-1)] = 6
+    label_seg[np.all(_label.transpose([1, 2, 0]) == LowVeg, axis=-1)] = 0
+    label_seg[np.all(_label.transpose([1, 2, 0]) == Tree, axis=-1)] = 0
+    label_seg[np.all(_label.transpose([1, 2, 0]) == Car, axis=-1)] = 0
+    label_seg[np.all(_label.transpose([1, 2, 0]) == Clutter, axis=-1)] = 0
+    label_seg[np.all(_label.transpose([1, 2, 0]) == Boundary, axis=-1)] = 0
     return label_seg
 
 

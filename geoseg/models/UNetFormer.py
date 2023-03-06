@@ -293,11 +293,6 @@ class Decoder(nn.Module):
         self.b2 = Block(dim=decode_channels, num_heads=8, window_size=window_size)
         self.p2 = WF(encoder_channels[-3], decode_channels)
 
-        if self.training:
-            self.up4 = nn.UpsamplingBilinear2d(scale_factor=4)
-            self.up3 = nn.UpsamplingBilinear2d(scale_factor=2)
-            self.aux_head = AuxHead(decode_channels, num_classes)
-
         self.p1 = FeatureRefinementHead(encoder_channels[-4], decode_channels)
 
         self.segmentation_head = nn.Sequential(ConvBNReLU(decode_channels, decode_channels),
@@ -308,23 +303,17 @@ class Decoder(nn.Module):
     def forward(self, res1, res2, res3, res4, h, w):
         if self.training:
             x = self.b4(self.pre_conv(res4))
-            h4 = self.up4(x)
 
             x = self.p3(x, res3)
             x = self.b3(x)
-            h3 = self.up3(x)
 
             x = self.p2(x, res2)
             x = self.b2(x)
-            h2 = x
             x = self.p1(x, res1)
             x = self.segmentation_head(x)
             x = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=False)
 
-            ah = h4 + h3 + h2
-            ah = self.aux_head(ah, h, w)
-
-            return x, ah
+            return x
         else:
             x = self.b4(self.pre_conv(res4))
             x = self.p3(x, res3)

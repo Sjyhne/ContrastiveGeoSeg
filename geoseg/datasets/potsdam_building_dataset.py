@@ -12,8 +12,8 @@ from PIL import Image
 import random
 
 
-CLASSES = ('ImSurf', 'Building', 'LowVeg', 'Tree', 'Car', 'Clutter')
-PALETTE = [[255, 255, 255], [0, 0, 255], [0, 255, 255], [0, 255, 0], [255, 204, 0], [255, 0, 0]]
+CLASSES = ('Background', 'Building')
+PALETTE = [[255, 255, 255], [0, 0, 255]]
 
 ORIGIN_IMG_SIZE = (512, 512)
 INPUT_IMG_SIZE = (1024, 1024)
@@ -63,7 +63,7 @@ def val_aug(img, mask):
 
 
 class PotsdamDataset(Dataset):
-    def __init__(self, data_root='data/potsdam/test', mode='val', img_dir='images', mask_dir='masks',
+    def __init__(self, data_root='data/potsdam_building/test', mode='val', img_dir='images', mask_dir='masks',
                  img_suffix='.tif', mask_suffix='.png', transform=val_aug, mosaic_ratio=0.0,
                  img_size=ORIGIN_IMG_SIZE, data_percentage=1.):
         self.data_root = data_root

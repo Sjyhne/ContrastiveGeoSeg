@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 import numpy as np
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from tools.load_pretrained import load_checkpoint
 
 
 class MaxPoolLayer(nn.Sequential):
@@ -154,7 +155,7 @@ def window_partition(x, window_size):
         windows: (num_windows*B, window_size, window_size, C)
     """
     B, H, W, C = x.shape
-    x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
+    x = x.contiguous().view(B, H // window_size, window_size, W // window_size, window_size, C)
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
     return windows
 
@@ -171,7 +172,7 @@ def window_reverse(windows, window_size, H, W):
         x: (B, H, W, C)
     """
     B = int(windows.shape[0] / (H * W / window_size / window_size))
-    x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
+    x = windows.contiguous().view(B, H // window_size, W // window_size, window_size, window_size, -1)
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
 
@@ -246,7 +247,7 @@ class WindowAttention(nn.Module):
         attn = (q @ k.transpose(-2, -1))
         # print(attn.shape)
 
-        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.contiguous().view(-1)].contiguous().view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
 
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
@@ -255,8 +256,8 @@ class WindowAttention(nn.Module):
 
         if mask is not None:
             nW = mask.shape[0]
-            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-            attn = attn.view(-1, self.num_heads, N, N)
+            attn = attn.contiguous().view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.contiguous().view(-1, self.num_heads, N, N)
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
@@ -325,7 +326,7 @@ class SwinTransformerBlock(nn.Module):
 
         shortcut = x
         x = self.norm1(x)
-        x = x.view(B, H, W, C)
+        x = x.contiguous().view(B, H, W, C)
 
         # pad feature maps to multiples of window size
         pad_l = pad_t = 0
@@ -344,13 +345,13 @@ class SwinTransformerBlock(nn.Module):
 
         # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
-        x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        x_windows = x_windows.contiguous().view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=attn_mask)  # nW*B, window_size*window_size, C
 
         # merge windows
-        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
+        attn_windows = attn_windows.contiguous().view(-1, self.window_size, self.window_size, C)
         shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)  # B H' W' C
 
         # reverse cyclic shift
@@ -406,7 +407,7 @@ class PatchMerging(nn.Module):
         x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
         x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-        x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
+        x = x.contiguous().view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
         x = self.norm(x)
         x = self.reduction(x)
@@ -500,7 +501,7 @@ class BasicLayer(nn.Module):
                 cnt += 1
 
         mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
-        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        mask_windows = mask_windows.contiguous().view(-1, self.window_size * self.window_size)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
         attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
 
@@ -556,7 +557,7 @@ class PatchEmbed(nn.Module):
             Wh, Ww = x.size(2), x.size(3)
             x = x.flatten(2).transpose(1, 2)
             x = self.norm(x)
-            x = x.transpose(1, 2).view(-1, self.embed_dim, Wh, Ww)
+            x = x.transpose(1, 2).contiguous().view(-1, self.embed_dim, Wh, Ww)
 
         return x
 
@@ -595,7 +596,7 @@ class SwinTransformer(nn.Module):
                  patch_size=4,
                  in_chans=3,
                  embed_dim=128,
-                 depths=[2, 2, 18, 2],
+                 depths=[2, 2, 2, 2],
                  num_heads=[4, 8, 16, 32],
                  window_size=7,
                  mlp_ratio=4.,
@@ -719,7 +720,7 @@ class SwinTransformer(nn.Module):
                 norm_layer = getattr(self, f'norm{i}')
                 x_out = norm_layer(x_out)
 
-                out = x_out.view(-1, H, W, self.num_features[i]).permute(0, 3, 1, 2).contiguous()
+                out = x_out.contiguous().view(-1, H, W, self.num_features[i]).permute(0, 3, 1, 2).contiguous()
                 outs.append(out)
                 # print('layer{} out size {}'.format(i, out.size()))
 
@@ -750,9 +751,9 @@ class SharedSpatialAttention(nn.Module):
     def forward(self, x):
         # Apply the feature map to the queries and keys
         batch_size, chnnels, width, height = x.shape
-        Q = self.query_conv(x).view(batch_size, -1, width * height)
-        K = self.key_conv(x).view(batch_size, -1, width * height)
-        V = self.value_conv(x).view(batch_size, -1, width * height)
+        Q = self.query_conv(x).contiguous().view(batch_size, -1, width * height)
+        K = self.key_conv(x).contiguous().view(batch_size, -1, width * height)
+        V = self.value_conv(x).contiguous().view(batch_size, -1, width * height)
 
         Q = self.l2_norm(Q).permute(-3, -1, -2)
         # print('q', Q.shape)
@@ -773,9 +774,9 @@ class SharedSpatialAttention(nn.Module):
 
         weight_value = torch.einsum("bcn, bn->bcn", matrix_sum, tailor_sum)
         # print('weight_value', weight_value.shape)
-        weight_value = weight_value.view(batch_size, chnnels, height, width)
+        weight_value = weight_value.contiguous().view(batch_size, chnnels, height, width)
 
-        return (x + self.gamma * weight_value).contiguous()
+        return (x + self.gamma * weight_value)
 
 
 class SharedChannelAttention(nn.Module):
@@ -787,9 +788,9 @@ class SharedChannelAttention(nn.Module):
 
     def forward(self, x):
         batch_size, chnnels, width, height = x.shape
-        Q = x.view(batch_size, chnnels, -1)
-        K = x.view(batch_size, chnnels, -1)
-        V = x.view(batch_size, chnnels, -1)
+        Q = x.contiguous().view(batch_size, chnnels, -1)
+        K = x.contiguous().view(batch_size, chnnels, -1)
+        V = x.contiguous().view(batch_size, chnnels, -1)
 
         Q = self.l2_norm(Q)
         K = self.l2_norm(K).permute(-3, -1, -2)
@@ -801,9 +802,9 @@ class SharedChannelAttention(nn.Module):
         matrix_sum = value_sum + torch.einsum("bcm, bmn->bcn", matrix, Q)
 
         weight_value = torch.einsum("bcn, bc->bcn", matrix_sum, tailor_sum)
-        weight_value = weight_value.view(batch_size, chnnels, height, width)
+        weight_value = weight_value.contiguous().view(batch_size, chnnels, height, width)
 
-        return (x + self.gamma * weight_value).contiguous()
+        return (x + self.gamma * weight_value)
 
 
 class DownConnection(nn.Module):
@@ -863,14 +864,16 @@ class Decoder(nn.Module):
                  encoder_channels=(96, 192, 384, 768),
                  dropout=0.05,
                  atrous_rates=(6, 12),
-                 num_classes=6):
+                 num_classes=6,
+                 patch_size=4):
         super(Decoder, self).__init__()
         self.dcfam = DCFAM(encoder_channels, atrous_rates)
         self.dropout = nn.Dropout2d(p=dropout, inplace=True)
         self.segmentation_head = nn.Sequential(
             ConvBNReLU(encoder_channels[0], encoder_channels[0]),
+            #TransposeConvBNReLu(encoder_channels[0], encoder_channels[1]),
             Conv(encoder_channels[0], num_classes, kernel_size=1),
-            nn.UpsamplingBilinear2d(scale_factor=4))
+            nn.UpsamplingBilinear2d(scale_factor=patch_size))
         self.up = nn.Sequential(
             ConvBNReLU(encoder_channels[1], encoder_channels[0]),
             nn.UpsamplingNearest2d(scale_factor=2)
@@ -903,31 +906,39 @@ class DCSwin(nn.Module):
                  embed_dim=128,
                  depths=(2, 2, 18, 2),
                  num_heads=(4, 8, 16, 32),
-                 frozen_stages=2):
+                 frozen_stages=2,
+                 contrastive=False):
         super(DCSwin, self).__init__()
         self.backbone = SwinTransformer(embed_dim=embed_dim, depths=depths, num_heads=num_heads, frozen_stages=frozen_stages)
+        load_checkpoint(self.backbone, "pretrain_weights/swin_base_patch4_window12_384_22k.pth")
         self.decoder = Decoder(encoder_channels, dropout, atrous_rates, num_classes)
+        self.contrastive = contrastive
 
     def forward(self, x):
         x1, x2, x3, x4 = self.backbone(x)
         x = self.decoder(x1, x2, x3, x4)
+
+        if self.contrastive:
+            return (x1, x2, x3, x4), x
+        
         return x
 
 
-def dcswin_base(pretrained=True, num_classes=4, weight_path='pretrain_weights/stseg_base.pth'):
+def dcswin_base(pretrained=True, num_classes=4, contrastive=False, weight_path='pretrain_weights/stseg_base.pth', frozen_stages=-1):
     # pretrained weights are load from official repo of Swin Transformer
     model = DCSwin(encoder_channels=(128, 256, 512, 1024),
                    num_classes=num_classes,
                    embed_dim=128,
                    depths=(2, 2, 18, 2),
                    num_heads=(4, 8, 16, 32),
-                   frozen_stages=2)
-    if pretrained and weight_path is not None:
-        old_dict = torch.load(weight_path)['state_dict']
-        model_dict = model.state_dict()
-        old_dict = {k: v for k, v in old_dict.items() if (k in model_dict)}
-        model_dict.update(old_dict)
-        model.load_state_dict(model_dict)
+                   frozen_stages=frozen_stages,
+                   contrastive=contrastive)
+    #if pretrained and weight_path is not None:
+    #    old_dict = torch.load(weight_path)['state_dict']
+    #    model_dict = model.state_dict()
+    #    old_dict = {k: v for k, v in old_dict.items() if (k in model_dict)}
+    #    model_dict.update(old_dict)
+    #    model.load_state_dict(model_dict)
     return model
 
 
