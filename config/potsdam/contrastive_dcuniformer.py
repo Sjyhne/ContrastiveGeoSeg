@@ -17,7 +17,7 @@ embedding_dims = [64, 128, 256, 512]
 num_classes = len(CLASSES)
 image_size = 512
 patch_size = 4
-learning_rate = 1e-4
+learning_rate = 8e-5
 
 
 # Swin config
@@ -124,13 +124,14 @@ dattn_conf = {
 
 # Contrastive conf
 
+gradient_clip_val = 1.0
 contrastive = True # Use None for False
 dist_loss = True
 contrastive_indices = [0, 1, 2, 3]
-con_loss_clip = None
+con_loss_clip = 1.0
 attn_loss_clip = None
 binary = None # Use None for False
-loss_type = "contrastive"
+loss_type = "info_nce"
 reduced_contrastive_patch = 1
 soft_ce_smoothing = 0.1
 take_top = 0.5
@@ -219,8 +220,8 @@ save_top_k = 2
 save_last = False
 
 check_val_every_n_epoch = 1
-gpus = [13]
-accumulate_grad_batches = 2
+gpus = [12, 13]
+accumulate_grad_batches = 1
 train_batch_size = 16 * len(gpus)
 
 strategy = "dp"
@@ -232,7 +233,7 @@ resume_ckpt_path = None
 dp = 1.0
 
 # weights and biases
-wandb_logging_name = f"DCUniFormer Contrastive w/positive"
+wandb_logging_name = f"DCUniFormer InfoNCE w/sampling & clipping NEW"
 wandb_project = f"Potsdam DCUniFormer {dp}"
 wandblogger = True
 

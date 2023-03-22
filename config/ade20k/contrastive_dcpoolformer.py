@@ -1,18 +1,18 @@
 from torch.utils.data import DataLoader
 from geoseg.losses import *
-from geoseg.datasets.potsdam_dataset import *
+from geoseg.datasets.ade20k_dataset import *
 from geoseg.models.ContrastiveDCPoolFormer import ContrastiveDCPoolFormer
 
-from config.common.dataset_specific import train_aug, val_aug
-from lightning.pytorch.strategies import SingleDeviceStrategy, DDPStrategy
+from config.common.dataset_specific import ade20k_train_aug, ade20k_val_aug
+from lightning.pytorch.strategies import SingleDeviceStrategy
 from info_nce import InfoNCE
 
 check_val_every_n_epoch = 1
-gpus = [13]
+gpus = [11]
 accumulate_grad_batches = 1
 learning_rate = 1e-4
 
-train_batch_size = 8 * len(gpus)
+train_batch_size = 8
 val_batch_size = 1
 
 auto_lr_find = True
@@ -22,22 +22,22 @@ con_loss_clip = 1000
 gradient_clip_val = None
 
 contrastive = True # Use None for False
-contrastive_indices = [0]
-loss_type = "info_nce"
+contrastive_indices = [0, 1, 2, 3]
+loss_type = "contrastive"
 reduced_contrastive_patch = 1
 soft_ce_smoothing = 0.
 take_top = 0.4
 max_samples = 10_000
-num_samples = 128
+num_samples = 512
 # weights and biases
-wandb_logging_name = f"DCPoolFormer InfoNCE (without detach) {contrastive_indices} (num_samples {num_samples}) (clip {con_loss_clip}) (bs {train_batch_size}, lr {learning_rate})"
-wandb_project = f"CT-DCPoolFormer New S (0.1)"
-wandblogger = False
+wandb_logging_name = f"DCPoolFormer Contrastive {contrastive_indices} (num_samples {num_samples}) (clip {con_loss_clip}) (lr {learning_rate})"
+wandb_project = f"CT-DCPoolFormer ADE20K (0.1)"
+wandblogger = True
 
 weights_name = wandb_logging_name
-weights_path = "model_weights/potsdam/{}".format(weights_name)
+weights_path = "model_weights/ade20k/{}".format(weights_name)
 test_weights_name = weights_name
-log_name = 'potsdam_full/{}'.format(weights_name)
+log_name = 'ade20k_full/{}'.format(weights_name)
 
 
 """
@@ -46,7 +46,7 @@ MODEL SPECIFIC
 
 # Common config
 embedding_dims = [128, 256, 512, 1024]
-num_classes = len(CLASSES)
+num_classes = CLASSES
 image_size = 512
 patch_size = 4
 
@@ -86,8 +86,8 @@ decoder_conf = {
 
 
 # Projection conf
-ignore_index = len(CLASSES)
 
+ignore_index = CLASSES
 proj_out = 128
 
 proj_conf = {
@@ -176,7 +176,7 @@ loss = JointLoss(
 RUNTIME SPECIFIC
 """
 
-max_epoch = 100
+max_epoch = 40
 classes = CLASSES
 
 monitor = 'val_F1'
@@ -184,7 +184,7 @@ monitor_mode = 'max'
 save_top_k = 2
 save_last = False
 
-strategy = DDPStrategy(find_unused_parameters=True)
+strategy = "ddp_find_unused_parameters_true"
 
 pretrained_ckpt_path = None
 resume_ckpt_path = None
@@ -194,23 +194,22 @@ dp = 0.1
 # Profiler
 profiler = None
 
-train_dataset = PotsdamDataset(
-    data_root='data/potsdam/train', 
+train_dataset = ADE20KDataset(
+    data_root='data/ade20k/train', 
     mode='train',
-    mosaic_ratio=0.25,
-    transform=train_aug,
+    transform=ade20k_train_aug,
     data_percentage=dp
 )
 
-val_dataset = PotsdamDataset(
-    data_root="data/potsdam/test", 
-    transform=val_aug, 
+val_dataset = ADE20KDataset(
+    data_root="data/ade20k/test",
+    transform=ade20k_val_aug,
     data_percentage=dp
 )
 
-test_dataset = PotsdamDataset(
-    data_root="data/potsdam/test", 
-    transform=val_aug, 
+test_dataset = ADE20KDataset(
+    data_root="data/ade20k/test", 
+    transform=ade20k_val_aug,
     data_percentage=dp
 )
 

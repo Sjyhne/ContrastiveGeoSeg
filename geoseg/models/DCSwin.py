@@ -884,10 +884,11 @@ class Decoder(nn.Module):
     def forward(self, x1, x2, x3, x4):
         out1, out2 = self.dcfam(x1, x2, x3, x4)
         x = out1 + self.up(out2)
+        con_x = x
         x = self.dropout(x)
         x = self.segmentation_head(x)
 
-        return x
+        return x, con_x
 
     def init_weight(self):
         for m in self.children():

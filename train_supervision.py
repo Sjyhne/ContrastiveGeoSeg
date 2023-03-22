@@ -1,15 +1,14 @@
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+import lightning as L
+from lightning.pytorch.callbacks import ModelCheckpoint
 from tools.cfg import py2cfg
 import os
 import torch
 from torch import nn
-import cv2
 import numpy as np
 import argparse
 from pathlib import Path
 from tools.metric import Evaluator
-from pytorch_lightning.loggers import CSVLogger, WandbLogger
+from lightning.pytorch.loggers import CSVLogger, WandbLogger
 import random
 import einops
 import torch.nn.functional as F
@@ -28,7 +27,7 @@ def seed_everything(seed):
 def get_args():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
-    arg("-c", "--config_path", type=Path, help="Path to the config.", required=True)
+    arg("-c", "--config_path", type=Path, default=Path("config/ade20k/contrastive_dcpoolformer.py"), help="Path to the config.")
     return parser.parse_args()
 
 
@@ -37,7 +36,7 @@ def split_tensor(tensor):
     half = indices.numel()//2
     return tensor.view(-1)[indices[:half]], tensor.view(-1)[indices[half:]]
 
-class Supervision_Train(pl.LightningModule):
+class Supervision_Train(L.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -45,6 +44,7 @@ class Supervision_Train(pl.LightningModule):
         self.automatic_optimization = True
 
         self.loss_fn = config.loss
+        self.learning_rate = config.learning_rate
         
         if config.contrastive != None:
             self.contrastive = True
@@ -54,6 +54,9 @@ class Supervision_Train(pl.LightningModule):
         self.metrics_train = Evaluator(num_class=config.num_classes)
         self.metrics_val = Evaluator(num_class=config.num_classes)
 
+        self.validation_step_outputs = list()
+        self.training_step_outputs = list()
+        
     def forward(self, x, mask=None):
         # only net is used in the prediction/inference
         
@@ -80,13 +83,10 @@ class Supervision_Train(pl.LightningModule):
             loss = loss + contrastive_loss
         else:
             prediction = self.model(img)
-        
+            
         loss = loss + self.loss_fn(prediction, mask)
         
-        if self.config.use_aux_loss:
-            pre_mask = nn.Softmax(dim=1)(prediction[0])
-        else:
-            pre_mask = nn.Softmax(dim=1)(prediction)
+        pre_mask = nn.Softmax(dim=1)(prediction)
 
         pre_mask = pre_mask.argmax(dim=1)
         for i in range(mask.shape[0]):
@@ -105,13 +105,18 @@ class Supervision_Train(pl.LightningModule):
         #if self.trainer.is_last_batch and (self.trainer.current_epoch + 1) % 1 == 0:
         #    sch.step()
         
+        self.training_step_outputs.append(loss)
+        
         return loss
     
-    def training_epoch_end(self, outputs):
+    def on_training_epoch_end(self):
         if 'vaihingen' in self.config.log_name:
             mIoU = np.nanmean(self.metrics_train.Intersection_over_Union()[:-1])
             F1 = np.nanmean(self.metrics_train.F1()[:-1])
         elif 'potsdam' in self.config.log_name:
+            mIoU = np.nanmean(self.metrics_train.Intersection_over_Union()[:-1])
+            F1 = np.nanmean(self.metrics_train.F1()[:-1])
+        elif 'ade20k' in self.config.log_name:
             mIoU = np.nanmean(self.metrics_train.Intersection_over_Union()[:-1])
             F1 = np.nanmean(self.metrics_train.F1()[:-1])
         elif 'whubuilding' in self.config.log_name:
@@ -134,14 +139,14 @@ class Supervision_Train(pl.LightningModule):
                       'OA': OA}
         print('\ntrain:', eval_value)
 
-        iou_value = {}
+        #iou_value = {}
         
-        for class_name, iou in zip(self.config.classes, iou_per_class):
-            iou_value[class_name] = iou
+        #for class_name, iou in zip(self.config.classes, iou_per_class):
+        #    iou_value[class_name] = iou
         
-        print(iou_value)
+        #print(iou_value)
         self.metrics_train.reset()
-        loss = torch.stack([x["loss"] for x in outputs]).mean()
+        loss = torch.stack(self.training_step_outputs).mean()
         log_dict = {"train_loss": loss, 'train_mIoU': mIoU, 'train_F1': F1, 'train_OA': OA}
         self.log_dict(log_dict, prog_bar=True)
 
@@ -165,10 +170,10 @@ class Supervision_Train(pl.LightningModule):
             self.metrics_val.add_batch(mask[i].detach().cpu().numpy(), pre_mask[i].detach().cpu().numpy())
         
         self.log("val_loss", loss_val.item(), on_epoch=True, batch_size=self.config.train_batch_size, sync_dist=True)
-        
+        self.validation_step_outputs.append(loss_val)
         return loss_val
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         if 'vaihingen' in self.config.log_name:
             mIoU = np.nanmean(self.metrics_val.Intersection_over_Union()[:-1])
             F1 = np.nanmean(self.metrics_val.F1()[:-1])
@@ -196,13 +201,13 @@ class Supervision_Train(pl.LightningModule):
                       'OA': OA}
         
         print('\nval:', eval_value)
-        iou_value = {}
-        for class_name, iou in zip(self.config.classes, iou_per_class):
-            iou_value[class_name] = iou
-        print(iou_value)
+        #iou_value = {}
+        #for class_name, iou in zip(self.config.classes, iou_per_class):
+        #    iou_value[class_name] = iou
+        #print(iou_value)
 
         self.metrics_val.reset()
-        loss = torch.stack([x for x in outputs]).mean()
+        loss = torch.stack(self.validation_step_outputs).mean()
         log_dict = {"val_loss": loss, 'val_mIoU': mIoU, 'val_F1': F1, 'val_OA': OA}
         self.log_dict(log_dict, prog_bar=True)
 
@@ -225,8 +230,8 @@ class Supervision_Train(pl.LightningModule):
 def main():
     args = get_args()
     config = py2cfg(args.config_path)
-    #seed_everything(13)
-
+    seed_everything(13)
+    
     checkpoint_callback = ModelCheckpoint(save_top_k=config.save_top_k, monitor=config.monitor,
                                           save_last=config.save_last, mode=config.monitor_mode,
                                           dirpath=config.weights_path,
@@ -246,14 +251,17 @@ def main():
         logger = [logger]
         logger.append(wandblogger)
 
-    trainer = pl.Trainer(devices=config.gpus, max_epochs=config.max_epoch, accelerator='gpu',
+    trainer = L.Trainer(devices=config.gpus, max_epochs=config.max_epoch, accelerator='gpu',
                          check_val_every_n_epoch=config.check_val_every_n_epoch,
                          logger=logger, strategy=config.strategy, callbacks=[checkpoint_callback],
                          accumulate_grad_batches=config.accumulate_grad_batches, 
                          gradient_clip_val=config.gradient_clip_val)
                          #callbacks=[checkpoint_callback], logger=logger) # gradient_clip_val=config.gradient_clip_val,
     
+    
     trainer.fit(model=model)
+    
+    print("Done training")
 
 
 if __name__ == "__main__":

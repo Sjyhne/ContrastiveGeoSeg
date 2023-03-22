@@ -7,3 +7,5 @@ model_weights/
 mmsegmentation/
 *.zip
 __pycache__
+output/
+.vscode/
